@@ -1,0 +1,12 @@
+../Core/Src/main.c:74:10:Read_ADC	1
+../Core/Src/main.c:79:6:Reset_PWM	1
+../Core/Src/main.c:83:6:Sweep_PWM	14
+../Core/Src/main.c:117:5:main	8
+../Core/Src/main.c:181:6:SystemClock_Config	3
+../Core/Src/main.c:228:13:MX_ADC1_Init	3
+../Core/Src/main.c:287:13:MX_TIM2_Init	4
+../Core/Src/main.c:336:13:MX_TIM3_Init	4
+../Core/Src/main.c:385:13:MX_TIM15_Init	5
+../Core/Src/main.c:451:13:MX_USART2_UART_Init	5
+../Core/Src/main.c:499:13:MX_GPIO_Init	1
+../Core/Src/main.c:533:6:Error_Handler	1
