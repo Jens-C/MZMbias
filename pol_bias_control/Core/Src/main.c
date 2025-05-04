@@ -333,14 +333,17 @@ int main(void)
 		__HAL_TIM_SET_COMPARE(htim_array[i],pwm_channels[i],900);
 	  }
 	HAL_Delay(1000);
+	// intial sweep
 	for (uint8_t i = 0; i < 3; i++) {
 	     Sweep_PWM(htim_array[i],pwm_channels[i]);
 
 	  }
+	// sweep 3 extra times padel 2 and 3 for extra accuracy
+	for (uint8_t i = 0; i < 3; i++) {
+		     Sweep_PWM(htim_array[1],pwm_channels[1]);
+		     Sweep_PWM(htim_array[2],pwm_channels[2]);
 
-
-
-
+	}
   //start sweep for mzm bias and calculate bias on midpoint between min and max output current
 #define STEP_SIZE_BIAS_SWEEP 16
   uint32_t adc_val[128]={0};
