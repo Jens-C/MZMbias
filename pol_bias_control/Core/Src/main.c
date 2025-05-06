@@ -141,8 +141,8 @@ static void MX_TIM3_Init(void);
 void Reset_PWM(TIM_HandleTypeDef *htim, uint32_t channel);
 void Sweep_PWM(TIM_HandleTypeDef *htim, uint32_t channel);
 uint32_t Read_ADC(void);
-TIM_HandleTypeDef *htim_array[3] = {&htim2, &htim2, &htim3};
-uint32_t pwm_channels[3] = {TIM_CHANNEL_2, TIM_CHANNEL_3, TIM_CHANNEL_1};
+TIM_HandleTypeDef *htim_array[3] = {&htim3, &htim2, &htim2};
+uint32_t pwm_channels[3] = {TIM_CHANNEL_1, TIM_CHANNEL_2, TIM_CHANNEL_3};
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -161,14 +161,14 @@ void Sweep_PWM(TIM_HandleTypeDef *htim, uint32_t channel) {
 	uint32_t best_pwm_value = 0;
 	uint32_t min_adc_value = 0xFFFFFFFF;
 	uint32_t adc_val = Read_ADC();
-    for (uint16_t duty = 900; duty <= 2100; duty += 10) {
+    for (uint16_t duty = 900; duty <= 2100; duty += 2) {
     	__HAL_TIM_SET_COMPARE(htim, channel, duty);
         HAL_Delay(10);
 
     	uint32_t adc_val = 0;
-        for(uint16_t i= 0; i<1;i++){
+        for(uint16_t i= 0; i<2;i++){
         	adc_val += Read_ADC();
-        	HAL_Delay(5);
+        	HAL_Delay(1);
         }
         sprintf(data, "adc:%d, pwm:%d \r\n",adc_val, duty);
         HAL_UART_Transmit(&huart2, data, strlen(data), 100);
@@ -331,17 +331,23 @@ int main(void)
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
 	for (uint8_t i = 0; i < 3; i++) {
 		__HAL_TIM_SET_COMPARE(htim_array[i],pwm_channels[i],900);
+		uint32_t adc_val = Read_ADC();
 	  }
 	HAL_Delay(1000);
 	// intial sweep
 	for (uint8_t i = 0; i < 3; i++) {
 	     Sweep_PWM(htim_array[i],pwm_channels[i]);
 
+
 	  }
 	// sweep 3 extra times padel 2 and 3 for extra accuracy
-	for (uint8_t i = 0; i < 3; i++) {
-		     Sweep_PWM(htim_array[1],pwm_channels[1]);
-		     Sweep_PWM(htim_array[2],pwm_channels[2]);
+	for (uint8_t i = 0; i < 2; i++) {
+		__HAL_TIM_SET_COMPARE(htim_array[1],pwm_channels[1],900);
+		HAL_Delay(1000);
+		Sweep_PWM(htim_array[1],pwm_channels[1]);
+		__HAL_TIM_SET_COMPARE(htim_array[2],pwm_channels[2],900);
+		HAL_Delay(1000);
+		Sweep_PWM(htim_array[2],pwm_channels[2]);
 
 	}
   //start sweep for mzm bias and calculate bias on midpoint between min and max output current
@@ -354,13 +360,14 @@ int main(void)
   Read_ADC();
   for(int i = 0; i< 2048; i+=STEP_SIZE_BIAS_SWEEP){
 	  //take avrage of 10values
-	  sprintf(data, "set to:%d\r\n\n ",i);
-	  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+
 	  HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1,DAC_ALIGN_12B_R, i);
 	  for(int j = 0; j<20;j++){
 		  HAL_Delay(2);
 		  adc_val[i/STEP_SIZE_BIAS_SWEEP] += Read_ADC();
 	  }
+	  sprintf(data,"set to:%d, adc: %d\r\n\n ",i, adc_val[i/STEP_SIZE_BIAS_SWEEP]);
+	  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 	  //keep highest and lowest adc values
 	  if(adc_val[i/STEP_SIZE_BIAS_SWEEP]>=adc_val[index_adc_val_highest]){
 		  index_adc_val_highest = i/STEP_SIZE_BIAS_SWEEP;
