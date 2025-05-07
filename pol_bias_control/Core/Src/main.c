@@ -26,6 +26,11 @@
 #include "math.h"
 #define PI 3.1415926
 #define TOLERANCE 1e-5
+#define FFT_BUFFER_SIZE 2048
+#define SAMPLE_FREQ 10240
+#define FFT_AVRAGE_COUNT 100
+#define EnablePolControl 0
+#define STEP_SIZE_BIAS_SWEEP 16
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -58,9 +63,7 @@ TIM_HandleTypeDef htim6;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-#define FFT_BUFFER_SIZE 2048
-#define SAMPLE_FREQ 10240
-#define FFT_AVRAGE_COUNT 100
+
 
 uint32_t sine_val[100];
 uint16_t hanning_array[FFT_BUFFER_SIZE];
@@ -241,7 +244,7 @@ void Calc_FFT(){
 			  fft_count++;
 
 
-			  float avgTemp = 0.0;
+			  float avgTemp = 0.0f;
 
 			  for (int i = 4; i < FFT_BUFFER_SIZE; i +=2){
 			  	float curVal = sqrtf((fftBufOut[i]*fftBufOut[i])+ (fftBufOut[i+1]*fftBufOut[i+1]));
@@ -249,7 +252,7 @@ void Calc_FFT(){
 				  //sprintf(data, "%d ", (uint16_t)(curVal));
 				  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 			  }
-			  avg += (uint32_t)avgTemp/((FFT_BUFFER_SIZE / 2)-2);
+			  avg += ((uint32_t)avgTemp/((FFT_BUFFER_SIZE / 2)-2));
 
 		  //old code, peakHz detector
 /*
@@ -326,32 +329,34 @@ int main(void)
   /* USER CODE BEGIN 2 */
 //polarization control
 
-  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
-  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
-	for (uint8_t i = 0; i < 3; i++) {
-		__HAL_TIM_SET_COMPARE(htim_array[i],pwm_channels[i],900);
-		uint32_t adc_val = Read_ADC();
-	  }
-	HAL_Delay(1000);
-	// intial sweep
-	for (uint8_t i = 0; i < 3; i++) {
-	     Sweep_PWM(htim_array[i],pwm_channels[i]);
 
+  //polarization control
+  if(EnablePolControl){
+	  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+	  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
+	  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+	  for (uint8_t i = 0; i < 3; i++) {
+	  		__HAL_TIM_SET_COMPARE(htim_array[i],pwm_channels[i],900);
+	  		uint32_t adc_val = Read_ADC();
+	  	  }
+	  	HAL_Delay(1000);
+	  	// intial sweep
+	  	for (uint8_t i = 0; i < 3; i++) {
+	  	     Sweep_PWM(htim_array[i],pwm_channels[i]);
+	  	  }
+	  	// sweep 3 extra times padel 2 and 3 for extra accuracy
+	  	for (uint8_t i = 0; i < 2; i++) {
+	  		__HAL_TIM_SET_COMPARE(htim_array[1],pwm_channels[1],900);
+	  		HAL_Delay(1000);
+	  		Sweep_PWM(htim_array[1],pwm_channels[1]);
+	  		__HAL_TIM_SET_COMPARE(htim_array[2],pwm_channels[2],900);
+	  		HAL_Delay(1000);
+	  		Sweep_PWM(htim_array[2],pwm_channels[2]);
+	  	}
+  }
 
-	  }
-	// sweep 3 extra times padel 2 and 3 for extra accuracy
-	for (uint8_t i = 0; i < 2; i++) {
-		__HAL_TIM_SET_COMPARE(htim_array[1],pwm_channels[1],900);
-		HAL_Delay(1000);
-		Sweep_PWM(htim_array[1],pwm_channels[1]);
-		__HAL_TIM_SET_COMPARE(htim_array[2],pwm_channels[2],900);
-		HAL_Delay(1000);
-		Sweep_PWM(htim_array[2],pwm_channels[2]);
-
-	}
   //start sweep for mzm bias and calculate bias on midpoint between min and max output current
-#define STEP_SIZE_BIAS_SWEEP 16
+
   uint32_t adc_val[128]={0};
   uint16_t dac_val[128]={0};
   uint16_t index_adc_val_smallest=0;
@@ -379,6 +384,7 @@ int main(void)
   }
   //set dac to midpoint
   uint16_t midpoint_dac_val = dac_val[(index_adc_val_highest + index_adc_val_smallest) / 2];
+  // set to 1500 to see convergence to center
   midpoint_dac_val = 1500;
   HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, midpoint_dac_val  );
   sprintf(data, "bias set as:%d\r\n\n ",midpoint_dac_val);
@@ -412,8 +418,7 @@ int main(void)
   while (1)
   {
 
-	  //for(int sweep = midpoint_dac_val-STEP_SIZE_BIAS_SWEEP; i<midpoint_dac_val+STEP_SIZE_BIAS_SWEEP; i+=STEP_SIZE_BIAS_SWEEP)
-	  //sweep through best known value of bias, one below and one above
+
 	  if(fft_count>=FFT_AVRAGE_COUNT){
 		  float phaseShift = avgPhaseShift/ fft_count;
 		  sprintf(data, "phase shift: %d\r\n\n ",(int16_t)(phaseShift*1000));
@@ -431,13 +436,13 @@ int main(void)
 			  sprintf(data, "phase shift: %d\r\n\n ",(int16_t)(phaseShift*1000));
 			  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 		  // divided by 4096# points dac multiplied by non inverting amp 14.124 = 3.3V*82k/25k+1
-
 			  //code from paper
 		  //float Vpi = ((midpoint_dac_val*13.724)/4096.0)*2;
 		  //float Vac = 0.66;
 		  //float correction =(Vpi/PI*arccot(((float)freq_mag[1]*bessel_jn(1,((Vac*PI)/Vpi)))/((float)freq_mag[0]*bessel_jn(2,((Vac*PI)/Vpi))))*sgn(phaseShift));//-(Vpi/2);
 		  //midpoint_dac_val = midpoint_dac_val - (int16_t)((correction/13.724)*4096);
 		  //fixed offset
+			  avg = avg/100;
 			  sprintf(data, "avg: %d\r\n\n ",avg);
 			  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 		  if(freq_mag[1]> 150000){
