@@ -58,7 +58,7 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 #define FFT_BUFFER_SIZE 2048
 #define SAMPLE_FREQ 10240
-#define FFT_AVRAGE_COUNT 100
+#define FFT_AVRAGE_COUNT 20
 
 uint32_t sine_val[100];
 uint16_t hanning_array[FFT_BUFFER_SIZE];
@@ -119,7 +119,8 @@ uint32_t avg =0;
 uint16_t sample_count_1khz = (1000*FFT_BUFFER_SIZE)/SAMPLE_FREQ;
 uint32_t freq_mag[3]={0};
 float avgPhaseShift = 0.0;
-
+float avgPhase1 = 0.0;
+float avgPhase2 = 0.0;
 
 
 /* USER CODE END PV */
@@ -180,9 +181,16 @@ void Calc_FFT(){
 		        float phase = atan2f(imag, real);
 		        if (i == sample_count_1khz) {
 		            phase_1khz = phase;
+		            avgPhase1 += phase;
 		        } else if (i == sample_count_1khz * 2) {
 		            phase_2khz = phase;
+		            avgPhase2 += phase;
 		            phase_shift_diff = phase_2khz - phase_1khz;
+		            //uint32_t remaining = DMA1->CNDTR4;
+		            //uint32_t position = 100 - remaining;  // Assuming buffer size is 100
+		  		  //sprintf(data, "%d ", (int16_t)(phase*1000));
+		  		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+
 		        }
 
 			  freq_mag[i/sample_count_1khz-1]+=(uint16_t)curVal;
@@ -190,11 +198,7 @@ void Calc_FFT(){
 		  }
 		  //sprintf(data, "%d ", (int16_t)(phase_shift_diff*1000));
 		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
-		  if (phase_shift_diff < 0) {
-		      phase_shift_diff += 2 * PI;
-		  } else if (phase_shift_diff >= 2 * PI) {
-		      phase_shift_diff -= 2 * PI;
-		  }
+
 
 
 			  avgPhaseShift += phase_shift_diff;
@@ -312,7 +316,7 @@ int main(void)
   //set dac to midpoint   */
   uint16_t midpoint_dac_val = dac_val[(index_adc_val_highest + index_adc_val_smallest) / 2];
 
-  midpoint_dac_val = 0;
+  midpoint_dac_val = 1500;
   HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, midpoint_dac_val  );
   sprintf(data, "bias set as:%d\r\n\n ",midpoint_dac_val);
   HAL_UART_Transmit(&huart2, data, strlen(data), 100);
@@ -349,17 +353,21 @@ int main(void)
 	  //sweep through best known value of bias, one below and one above
 	  if(fft_count>=FFT_AVRAGE_COUNT){
 		  float phaseShift = avgPhaseShift/ fft_count;
+		  avgPhase1/=FFT_AVRAGE_COUNT;
+		  avgPhase2/=FFT_AVRAGE_COUNT;
+  		  //sprintf(data, "2khz: %d,1khz: %d \r\n\n", (int16_t)(avgPhase2*1000),(int16_t)(avgPhase1*1000));
+  		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 
 		  fft_count=0;
 		  //sprintf(data, "%dfor  %d 1khz:%d 2khz:%d 3khz:%d\r\n\n ",sweep_count,prev_bias,freq_mag[0], freq_mag[1] ,freq_mag[2]);
 		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 		    if (phaseShift> PI) {
-		    	phaseShift -= 2 * PI;
+		    	//phaseShift -= 2 * PI;
 		    } else if (phaseShift < PI) {
 		    	//phaseShift+= 2 * PI;
 		    }
 
-			  sprintf(data, "dac: %d phase shift: %d\r\n\n ",midpoint_dac_val,(int16_t)(phaseShift*1000));
+			  sprintf(data, "\r\n\ndac: %d phase shift: %d\r\n\n ",midpoint_dac_val,(int16_t)(avgPhase2*1000));
 			  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 		  // divided by 4096# points dac multiplied by non inverting amp 14.124 = 3.3V*82k/25k+1
 
@@ -371,11 +379,11 @@ int main(void)
 		  //fixed offset
 			  //sprintf(data, "avg: %d\r\n\n ",avg);
 			  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
-		  if(freq_mag[1]> 150000){
-			  float correction2 =50*sgn(phaseShift);
-			  midpoint_dac_val= midpoint_dac_val+100;
-			  if(midpoint_dac_val>=2048){
-				  midpoint_dac_val = 0;
+		  if(freq_mag[1]> 0){
+			  float correction2 =50*sgn(avgPhase2);
+			  midpoint_dac_val= midpoint_dac_val+20;
+			  if(midpoint_dac_val>2000){
+				  midpoint_dac_val = 1700;
 			  }
 			  //sprintf(data, "correction: %d\r\n\n ",(int16_t)(correction2));
 			  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
@@ -383,7 +391,7 @@ int main(void)
 		  avg = 0;
 		  //sprintf(data, "new dac val: %d\r\n\n ",midpoint_dac_val);
 		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
-		  //HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, midpoint_dac_val);
+		  HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, midpoint_dac_val);
 
 	  		fft_count=0;
 	  		avgPhaseShift = 0;
