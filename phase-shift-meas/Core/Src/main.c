@@ -63,6 +63,23 @@ UART_HandleTypeDef huart2;
 uint32_t sine_val[100];
 uint16_t hanning_array[FFT_BUFFER_SIZE];
 
+double getPhaseAngle(int val) {
+  // Reverse the transformation steps
+  double temp = (val - 200) * 5;           // Reverse the +200 and division by 5
+  double normalized = temp / 2048.0;       // Reverse the multiplication by 2048
+  double sine_val = normalized - 1.0;      // Reverse the +1
+
+  // Ensure sine_val is within valid range [-1, 1] for arcsin
+  if (sine_val < -1.0 || sine_val > 1.0) {
+      return NAN; // Invalid input, return Not-A-Number
+  }
+
+  // Calculate the phase angle in radians using arcsin
+  double phase_rad = asin(sine_val);
+
+  return phase_rad;  // Return the phase angle in radians
+}
+
 void calcsin ()
 {
 	for (int i=0; i<100; i++)
