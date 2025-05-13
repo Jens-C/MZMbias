@@ -58,7 +58,7 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 #define FFT_BUFFER_SIZE 2048
 #define SAMPLE_FREQ 10240
-#define FFT_AVRAGE_COUNT 20
+#define FFT_AVRAGE_COUNT 10
 
 uint32_t sine_val[100];
 uint16_t hanning_array[FFT_BUFFER_SIZE];
@@ -123,7 +123,8 @@ float arccot(float x) {
 
 arm_rfft_fast_instance_f32 fftHandler;
 uint16_t ADC_val[FFT_BUFFER_SIZE*2] = {0};
-float fftBufIn[FFT_BUFFER_SIZE]= {0.0};
+float fftBufIn1[FFT_BUFFER_SIZE]= {0.0};
+float fftBufIn2[FFT_BUFFER_SIZE]= {0.0};
 float fftBufOut[FFT_BUFFER_SIZE];
 uint8_t fftflag = 0;
 static int16_t fftIndex = 0;
@@ -164,101 +165,101 @@ uint32_t Read_ADC(void) {
 }
 
 void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc) {
-        for (int i = 0; i < FFT_BUFFER_SIZE ; i++) {
-	 	fftBufIn[i] = (float)(ADC_val[i]*hanning_array[i]) ;
-        }
-        //sprintf(data, "half buffer\r\n\n ");
-        //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
-        Calc_FFT();
+  for (int i = 0; i < FFT_BUFFER_SIZE ; i++) {
+fftBufIn1[i] = (float)(ADC_val[i]*hanning_array[i]);
+  }
+  //sprintf(data, "half buffer\r\n\n ");
+  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+  Calc_FFT(fftBufIn1);
 }
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
-	 for (int i = FFT_BUFFER_SIZE; i < FFT_BUFFER_SIZE*2; i++) {
-	  	fftBufIn[i-FFT_BUFFER_SIZE] = (float)(ADC_val[i]) ;
-        }
-        //sprintf(data, "full buffer\r\n\n " );
-        //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
-        Calc_FFT();
+for (int i = 0; i < FFT_BUFFER_SIZE; i++) {
+fftBufIn2[i] = (float)(ADC_val[i]*hanning_array[i]);
+  }
+  //sprintf(data, "full buffer\r\n\n " );
+  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+  Calc_FFT(fftBufIn2);
 }
 
 
 
 
 
-void Calc_FFT(){
+void Calc_FFT(float *fftBufIn ){
 
-	arm_rfft_fast_f32(&fftHandler, &fftBufIn, &fftBufOut,0);
-		  float phase_1khz = 0.0f, phase_2khz = 0.0f;
-		  //calc freqmagnitude for 1,2,3khz
-		  float phase_shift_diff = 0.0;
-		  for (int i = sample_count_1khz; i <= sample_count_1khz*3; i +=sample_count_1khz){
-		        float real = fftBufOut[i * 2];
-		        float imag = fftBufOut[(i * 2) + 1];
-		        float curVal = sqrtf((real * real) + (imag * imag));
-		        float phase = atan2f(imag, real);
-		        if (i == sample_count_1khz) {
-		            phase_1khz = phase;
-		            avgPhase1 += phase;
-		        } else if (i == sample_count_1khz * 2) {
-		            phase_2khz = phase;
-		            avgPhase2 += phase;
-		            phase_shift_diff = phase_2khz - phase_1khz;
-		            //uint32_t remaining = DMA1->CNDTR4;
-		            //uint32_t position = 100 - remaining;  // Assuming buffer size is 100
-		  		  //sprintf(data, "%d ", (int16_t)(phase*1000));
-		  		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+arm_rfft_fast_f32(&fftHandler, fftBufIn, &fftBufOut,0);
 
-		        }
-
-			  freq_mag[i/sample_count_1khz-1]+=(uint16_t)curVal;
-
-		  }
-		  //sprintf(data, "%d ", (int16_t)(phase_shift_diff*1000));
-		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+float phase_1khz = 0.0f, phase_2khz = 0.0f;
+//calc freqmagnitude for 1,2,3khz
+float phase_shift_diff = 0.0;
+float dacval = 0.0f;
+for (int i = sample_count_1khz; i <= sample_count_1khz*3; i +=sample_count_1khz){
+      float real = fftBufOut[2*i ];
+      float imag = fftBufOut[(2*i) + 1];
+      float curVal = sqrtf((real * real) + (imag * imag));
+      float phase = atan2f(imag, real);
+      if (i == sample_count_1khz) {
+          phase_1khz = phase;
+      } else if (i == sample_count_1khz * 2) {
+          phase_2khz = phase;
+          phase_shift_diff = phase_2khz;
+          //dacval= getPhaseAngle(HAL_DAC_GetValue(&hdac1, DAC1_CHANNEL_2));
 
 
+      }
 
-			  avgPhaseShift += phase_shift_diff;
-			  fft_count++;
+  freq_mag[i/sample_count_1khz-1]+=((uint32_t)curVal)/1000;
+    //sprintf(data, "%d \r\n", (int16_t)(dacval*1000));
+    //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+
+}
+//sprintf(data, "%d ", (int16_t)(phase_2khz*1000));
+//HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 
 
-			  float avgTemp = 0.0;
+  avgPhaseShift += phase_shift_diff;
+  fft_count++;
 
-			  for (int i = 4; i < FFT_BUFFER_SIZE; i +=2){
-			  	float curVal = sqrtf((fftBufOut[i]*fftBufOut[i])+ (fftBufOut[i+1]*fftBufOut[i+1]));
-			  	avgTemp += curVal;  // Convert float to
-				  //sprintf(data, "%d ", (uint16_t)(curVal));
-				  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
-			  }
-			  avg += (uint32_t)avgTemp/((FFT_BUFFER_SIZE / 2)-2);
 
-		  //old code, peakHz detector
+  uint32_t avgTemp = 0;
+
+  for (int i = 4; i < FFT_BUFFER_SIZE; i +=2){
+    float curVal = sqrtf((fftBufOut[i]*fftBufOut[i])+ (fftBufOut[i+1]*fftBufOut[i+1]));
+    avgTemp += ((uint32_t)curVal)/1000;  // Convert float to
+
+
+
+  }
+  avg += ((uint32_t)avgTemp/((FFT_BUFFER_SIZE / 2)-2));
+
+//old code, peakHz detector
 /*
-		  uint16_t freqIndex = 0;
-		  float peakVal =0.0;
-		  uint16_t peakHz = 0;
-		  for (int i = 0; i < FFT_BUFFER_SIZE; i +=2){
-			 float curVal = sqrtf((fftBufOut[i]*fftBufOut[i])+ (fftBufOut[i+1]*fftBufOut[i+1]));
-			 uint16_t fft_value = (uint16_t)curVal;  // Convert float to
+uint16_t freqIndex = 0;
+float peakVal =0.0;
+uint16_t peakHz = 0;
+for (int i = 0; i < FFT_BUFFER_SIZE; i +=2){
+ float curVal = sqrtf((fftBufOut[i]*fftBufOut[i])+ (fftBufOut[i+1]*fftBufOut[i+1]));
+ uint16_t fft_value = (uint32_t)curVal;  // Convert float to
 
-			 if(curVal> peakVal){
-				 if(i>2){
-					peakVal = curVal;
-				 }
-				 peakHz = (uint16_t)(((freqIndex)*SAMPLE_FREQ)/FFT_BUFFER_SIZE);
-			 }
-			freqIndex++;
-
-
-		 }
+ if(curVal> peakVal){
+   if(i>2){
+    peakVal = curVal;
+   }
+   peakHz = (uint16_t)(((freqIndex)*SAMPLE_FREQ)/FFT_BUFFER_SIZE);
+ }
+freqIndex++;
 
 
-		  sprintf(data, "peakhz: %d ",peakHz);
-		  			 HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+}
 
-	  		freqIndex = 0;
 
-	  		 */
+sprintf(data, "peakhz: %d ",peakHz);
+       HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+
+  freqIndex = 0;
+*/
+
 
 
 
@@ -333,7 +334,7 @@ int main(void)
   //set dac to midpoint   */
   uint16_t midpoint_dac_val = dac_val[(index_adc_val_highest + index_adc_val_smallest) / 2];
 
-  midpoint_dac_val = 1500;
+  midpoint_dac_val = 0;
   HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, midpoint_dac_val  );
   sprintf(data, "bias set as:%d\r\n\n ",midpoint_dac_val);
   HAL_UART_Transmit(&huart2, data, strlen(data), 100);
@@ -370,22 +371,21 @@ int main(void)
 	  //sweep through best known value of bias, one below and one above
 	  if(fft_count>=FFT_AVRAGE_COUNT){
 		  float phaseShift = avgPhaseShift/ fft_count;
-		  avgPhase1/=FFT_AVRAGE_COUNT;
-		  avgPhase2/=FFT_AVRAGE_COUNT;
+
   		  //sprintf(data, "2khz: %d,1khz: %d \r\n\n", (int16_t)(avgPhase2*1000),(int16_t)(avgPhase1*1000));
   		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 
 		  fft_count=0;
-		  //sprintf(data, "%dfor  %d 1khz:%d 2khz:%d 3khz:%d\r\n\n ",sweep_count,prev_bias,freq_mag[0], freq_mag[1] ,freq_mag[2]);
-		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+		  sprintf(data, "dac: %d 1khz: %d 2khz: %d 3khz: %d\r\n ",midpoint_dac_val,freq_mag[0], freq_mag[1] ,freq_mag[2]);
+		  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 		    if (phaseShift> PI) {
 		    	//phaseShift -= 2 * PI;
 		    } else if (phaseShift < PI) {
 		    	//phaseShift+= 2 * PI;
 		    }
 
-			  sprintf(data, "\r\n\ndac: %d phase shift: %d\r\n\n ",midpoint_dac_val,(int16_t)(avgPhase2*1000));
-			  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+			  //sprintf(data, "dac: %d phase shift: %d\r\n ",midpoint_dac_val,(int16_t)(phaseShift*1000));
+			  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 		  // divided by 4096# points dac multiplied by non inverting amp 14.124 = 3.3V*82k/25k+1
 
 			  //code from paper
@@ -397,10 +397,10 @@ int main(void)
 			  //sprintf(data, "avg: %d\r\n\n ",avg);
 			  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 		  if(freq_mag[1]> 0){
-			  float correction2 =50*sgn(avgPhase2);
-			  midpoint_dac_val= midpoint_dac_val+20;
-			  if(midpoint_dac_val>2000){
-				  midpoint_dac_val = 1700;
+			  float correction2 =5*sgn(avgPhase2);
+			  midpoint_dac_val= midpoint_dac_val+2;
+			  if(midpoint_dac_val>3700){
+				  midpoint_dac_val = 0;
 			  }
 			  //sprintf(data, "correction: %d\r\n\n ",(int16_t)(correction2));
 			  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);

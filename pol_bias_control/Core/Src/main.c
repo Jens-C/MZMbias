@@ -28,7 +28,7 @@
 #define TOLERANCE 1e-5
 #define FFT_BUFFER_SIZE 2048
 #define SAMPLE_FREQ 10240
-#define FFT_AVRAGE_COUNT 100
+#define FFT_AVRAGE_COUNT 20
 #define EnablePolControl 0
 #define STEP_SIZE_BIAS_SWEEP 16
 /* USER CODE END Includes */
@@ -89,7 +89,7 @@ void calcsin ()
 {
 	for (int i=0; i<100; i++)
 	{
-		sine_val[i] = ((sin(i*2*PI/100) + 1)*(4096/2))/5+200;
+		sine_val[i] = ((sin(i*2*PI/100) + 1)*(4096/2))/40+200;
 	}
 }
 
@@ -184,10 +184,10 @@ void Sweep_PWM(TIM_HandleTypeDef *htim, uint32_t channel) {
 	uint32_t adc_val = Read_ADC();
     for (uint16_t duty = 900; duty <= 2100; duty += 10) {
     	__HAL_TIM_SET_COMPARE(htim, channel, duty);
-        HAL_Delay(10);
+        HAL_Delay(5);
 
     	uint32_t adc_val = 0;
-        for(uint16_t i= 0; i<10;i++){
+        for(uint16_t i= 0; i<5;i++){
         	adc_val += Read_ADC();
         	HAL_Delay(2);
         }
@@ -245,7 +245,7 @@ void Calc_FFT(float *fftBufIn ){
 		            phase_1khz = phase;
 		        } else if (i == sample_count_1khz * 2) {
 		            phase_2khz = phase;
-		            phase_shift_diff = phase_2khz - phase_1khz;
+		            phase_shift_diff = phase_2khz;
 		            //dacval= getPhaseAngle(HAL_DAC_GetValue(&hdac1, DAC1_CHANNEL_2));
 
 
@@ -256,8 +256,8 @@ void Calc_FFT(float *fftBufIn ){
 	  		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 
 		  }
-		  sprintf(data, "%d ", (int16_t)(phase_2khz*1000));
-		  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+		  //sprintf(data, "%d ", (int16_t)(phase_2khz*1000));
+		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 
 
 			  avgPhaseShift += phase_shift_diff;
@@ -365,16 +365,6 @@ int main(void)
 	  	for (uint8_t i = 0; i < 3; i++) {
 	  	     Sweep_PWM(htim_array[i],pwm_channels[i]);
 	  	  }
-    	uint32_t adc_val = 0;
-        for(uint16_t i= 0; i<100;i++){
-        	adc_val += Read_ADC();
-        	HAL_Delay(2);
-        }
-
-        sprintf(data, "adc normal: %d\r\n",adc_val);
-        HAL_UART_Transmit(&huart2, data, strlen(data), 100);
-        HAL_Delay(3000);
-        adc_val = 0;
 	  	// sweep 3 extra times padel 2 and 3 for extra accuracy
 	  	for (uint8_t i = 0; i < 2; i++) {
 	  		__HAL_TIM_SET_COMPARE(htim_array[1],pwm_channels[1],900);
@@ -384,12 +374,6 @@ int main(void)
 	  		HAL_Delay(500);
 	  		Sweep_PWM(htim_array[2],pwm_channels[2]);
 	  	}
-        for(uint16_t i= 0; i<100;i++){
-        	adc_val += Read_ADC();
-        	HAL_Delay(2);
-        }
-        sprintf(data, "adc after extra: %d\r\n",adc_val);
-        HAL_UART_Transmit(&huart2, data, strlen(data), 100);
   }
 
   //start sweep for mzm bias and calculate bias on midpoint between min and max output current
@@ -400,7 +384,7 @@ int main(void)
   uint16_t index_adc_val_highest=0;
   HAL_DAC_Start(&hdac1,DAC_CHANNEL_1);
   Read_ADC();
-  for(int i = 0; i< 200; i+=STEP_SIZE_BIAS_SWEEP){
+  for(int i = 0; i< 3000; i+=STEP_SIZE_BIAS_SWEEP){
 	  //take avrage of 10values
 
 	  HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1,DAC_ALIGN_12B_R, i);
@@ -408,8 +392,8 @@ int main(void)
 		  HAL_Delay(2);
 		  adc_val[i/STEP_SIZE_BIAS_SWEEP] += Read_ADC();
 	  }
-	  sprintf(data,"set to:%d, adc: %d\r\n\n ",i, adc_val[i/STEP_SIZE_BIAS_SWEEP]);
-	  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+	  //sprintf(data,"set to:%d, adc: %d\r\n\n ",i, adc_val[i/STEP_SIZE_BIAS_SWEEP]);
+	  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 	  //keep highest and lowest adc values
 	  if(adc_val[i/STEP_SIZE_BIAS_SWEEP]>=adc_val[index_adc_val_highest]){
 		  index_adc_val_highest = i/STEP_SIZE_BIAS_SWEEP;
@@ -422,14 +406,14 @@ int main(void)
   //set dac to midpoint
   uint16_t midpoint_dac_val = dac_val[(index_adc_val_highest + index_adc_val_smallest) / 2];
   // set to 1500 to see convergence to center
-  midpoint_dac_val = 1700;
+  midpoint_dac_val = 1800;
   HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, midpoint_dac_val  );
   sprintf(data, "bias set as:%d\r\n\n ",midpoint_dac_val);
   //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 
 
   //reset the adc
-  HAL_ADC_Stop(&hadc1);
+  //HAL_ADC_Stop(&hadc1);
   //ADC_Disable(&hadc1);
   MX_ADC1_Init2();
 
@@ -458,16 +442,16 @@ int main(void)
 
 	  if(fft_count>=FFT_AVRAGE_COUNT){
 		  float phaseShift = avgPhaseShift/ FFT_AVRAGE_COUNT;
-		  sprintf(data, "phase shift: %d\r\n\n ",(int16_t)(phaseShift*1000));
-		  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+		  //sprintf(data, "phase shift: %d\r\n\n ",(int16_t)(phaseShift*1000));
+		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 
 		  fft_count=0;
-		  sprintf(data, "%dfor  %d 1khz:%d 2khz:%d 3khz:%d\r\n\n ",sweep_count,prev_bias,freq_mag[0], freq_mag[1] ,freq_mag[2]);
-		  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+		  //sprintf(data, "%dfor  %d 1khz:%d 2khz:%d 3khz:%d\r\n ",sweep_count,prev_bias,freq_mag[0], freq_mag[1] ,freq_mag[2]);
+		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 
 
-			  sprintf(data, "phase shift: %d\r\n\n ",(int16_t)(phaseShift*1000));
-			  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+			  //sprintf(data, "phase shift: %d\r\n\n ",(int16_t)(phaseShift*1000));
+			  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 		  // divided by 4096# points dac multiplied by non inverting amp 14.124 = 3.3V*82k/25k+1
 			  //code from paper
 		  //float Vpi = ((midpoint_dac_val*13.724)/4096.0)*2;
@@ -476,16 +460,16 @@ int main(void)
 		  //midpoint_dac_val = midpoint_dac_val - (int16_t)((correction/13.724)*4096);
 		  //fixed offset
 			  avg = avg/100;
-			  sprintf(data, "avg: %d\r\n\n ",avg);
-			  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+			  //sprintf(data, "avg: %d\r\n ",avg);
+			  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 		  if(freq_mag[1]> 0){
-			  float correction2 =50*sgn(phaseShift);
+			  float correction2 =-2*sgn(phaseShift);
 			  midpoint_dac_val = midpoint_dac_val - (int16_t)(correction2);
-			  sprintf(data, "correction: %d\r\n\n ",(int16_t)(correction2));
-			  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+			  //sprintf(data, "correction: %d\r\n\n ",(int16_t)(correction2));
+			  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 		  }
 		  avg = 0;
-		  sprintf(data, "new dac val: %d\r\n\n ",midpoint_dac_val);
+		  sprintf(data, "phase: %d new dac val: %d\r\n\n ",(int16_t)(phaseShift*1000), midpoint_dac_val);
 		  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 		  HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, midpoint_dac_val);
 
@@ -496,6 +480,7 @@ int main(void)
 			  }
 			  fft_count=0;
 	  }
+
 
 /*
 	  //for(int sweep = midpoint_dac_val-STEP_SIZE_BIAS_SWEEP; i<midpoint_dac_val+STEP_SIZE_BIAS_SWEEP; i+=STEP_SIZE_BIAS_SWEEP)
@@ -897,7 +882,7 @@ static void MX_TIM6_Init(void)
   htim6.Instance = TIM6;
   htim6.Init.Prescaler = 63;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 4;
+  htim6.Init.Period = 9;
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
   {
