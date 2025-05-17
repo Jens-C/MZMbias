@@ -28,7 +28,7 @@
 #define TOLERANCE 1e-5
 #define FFT_BUFFER_SIZE 2048
 #define SAMPLE_FREQ 10240
-#define FFT_AVRAGE_COUNT 20
+#define FFT_AVRAGE_COUNT 100
 #define EnablePolControl 0
 #define STEP_SIZE_BIAS_SWEEP 16
 /* USER CODE END Includes */
@@ -89,7 +89,7 @@ void calcsin ()
 {
 	for (int i=0; i<100; i++)
 	{
-		sine_val[i] = ((sin(i*2*PI/100) + 1)*(4096/2))/40+200;
+		sine_val[i] = ((sin(i*2*PI/100) + 1)*(4096/2))/160+200;
 	}
 }
 
@@ -406,10 +406,12 @@ int main(void)
   //set dac to midpoint
   uint16_t midpoint_dac_val = dac_val[(index_adc_val_highest + index_adc_val_smallest) / 2];
   // set to 1500 to see convergence to center
-  midpoint_dac_val = 1800;
   HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, midpoint_dac_val  );
   sprintf(data, "bias set as:%d\r\n\n ",midpoint_dac_val);
-  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+  midpoint_dac_val = 1870;
+
+
 
 
   //reset the adc
@@ -469,7 +471,7 @@ int main(void)
 			  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 		  }
 		  avg = 0;
-		  sprintf(data, "phase: %d new dac val: %d\r\n\n ",(int16_t)(phaseShift*1000), midpoint_dac_val);
+		  sprintf(data, "phase: %d new dac val: %d\r\n ",(int16_t)(phaseShift*1000), midpoint_dac_val);
 		  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 		  HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, midpoint_dac_val);
 
