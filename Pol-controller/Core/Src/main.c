@@ -80,31 +80,35 @@ void Reset_PWM(TIM_HandleTypeDef *htim, uint32_t channel) {
 }
 
 
+//sweep pwm values of the MPC
 void Sweep_PWM(TIM_HandleTypeDef *htim, uint32_t channel) {
+  //delay to wait for mpc to go to start
 	HAL_Delay(1000);
 	uint32_t best_pwm_value = 0;
 	uint32_t min_adc_value = 0xFFFFFFFF;
 	uint32_t adc_val = Read_ADC();
+    //loop over all posible duty cycles
     for (uint16_t duty = 900; duty <= 2100; duty += 10) {
     	__HAL_TIM_SET_COMPARE(htim, channel, duty);
-        HAL_Delay(10);
-
+      HAL_Delay(5);
+      //average 5 adc values
     	uint32_t adc_val = 0;
-        for(uint16_t i= 0; i<1;i++){
-        	adc_val += Read_ADC();
-        	HAL_Delay(5);
-        }
-        sprintf(data, "adc:%d, pwm:%d \r\n",adc_val, duty);
-        HAL_UART_Transmit(&huart2, data, strlen(data), 100);
-        if (adc_val < min_adc_value) {
-        	  min_adc_value = adc_val;
-        	  best_pwm_value = duty;
-
-        }
+      for(uint16_t i= 0; i<5;i++){
+        adc_val += Read_ADC();
+        HAL_Delay(2);
+      }
+      //sprintf(data, "adc:%d, pwm:%d \r\n",adc_val, duty);
+      //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+      //save best value
+      if (adc_val < min_adc_value) {
+        	min_adc_value = adc_val;
+        	best_pwm_value = duty;
+      }
 
     }
-    sprintf(data, "best adc:%d, pwm:%d \r\n",min_adc_value, best_pwm_value );
-    HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+    //sprintf(data, "best adc:%d, pwm:%d \r\n",min_adc_value, best_pwm_value );
+    //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+    //set pwm of paddle to best
     __HAL_TIM_SET_COMPARE(htim, channel, best_pwm_value);
     HAL_Delay(1000);
 }
@@ -147,10 +151,12 @@ int main(void)
   HAL_TIM_PWM_Start(&htim15, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+  //reset pwm to 0
 	for (uint8_t i = 0; i < 3; i++) {
 		__HAL_TIM_SET_COMPARE(htim_array[i],pwm_channels[i],900);
 	  }
 	HAL_Delay(1000);
+  //sweep all 3 paddles
 	for (uint8_t i = 0; i < 3; i++) {
 	     Sweep_PWM(htim_array[i],pwm_channels[i]);
 

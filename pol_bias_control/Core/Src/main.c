@@ -25,12 +25,20 @@
 #include "arm_math.h"
 #include "math.h"
 #define PI 3.1415926
-#define TOLERANCE 1e-5
+//amplitude of the dither voltage
+#define DITHER_VOLTAGE 0.025
+// sampling frequency must be multiple of the FFT_BUFFER_SIZE
 #define FFT_BUFFER_SIZE 2048
+// sampling frequency must be multiple of the FFT_BUFFER_SIZE
 #define SAMPLE_FREQ 10240
+// amount of times the fft is averaged before correcting the MZM dc bias
 #define FFT_AVRAGE_COUNT 100
+//Set 0 to disable polarization control
 #define EnablePolControl 0
+// the size of the steps the initial MZM bias sweep takes in dac values 0 = 0V, 4096 = 12V
 #define STEP_SIZE_BIAS_SWEEP 16
+// the size of the MZM bias correction when the algorithm runs 0 = 0V, 4096 = 12V
+#define BIAS_CORRECTION_FACTOR 2
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -65,54 +73,40 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 
 
+
+
+// calculate the sinewave of the dithersignal
 uint32_t sine_val[100];
-uint16_t hanning_array[FFT_BUFFER_SIZE];
-
-float getPhaseAngle(int val) {
-    // Reverse the transformation steps
-    float temp = (val - 200) * 5;           // Reverse the +200 and division by 5
-    float normalized = temp / 2048.0;       // Reverse the multiplication by 2048
-    float sine_val = normalized - 1.0;      // Reverse the +1
-
-    // Ensure sine_val is within valid range [-1, 1] for arcsin
-    if (sine_val < -1.0 || sine_val > 1.0) {
-        return NAN; // Invalid input, return Not-A-Number
-    }
-
-    // Calculate the phase angle in radians using arcsin
-    float phase_rad = asin(sine_val);
-
-    return phase_rad;  // Return the phase angle in radians
-}
-
 void calcsin ()
 {
 	for (int i=0; i<100; i++)
 	{
-		sine_val[i] = ((sin(i*2*PI/100) + 1)*(4096/2))/160+200;
+    sine_val[i] = ((sin(i * 2 * PI / 100) + 1) / 2) * (DITHER_VOLTAGE * 4096 / 3.3) + 200;
 	}
 }
 
+//reverse of the calcsin function, used in testing to get the phase angle by reading the state of the DAC
+float getPhaseAngle(int val) {
+    float SCALE = (DITHER_VOLTAGE * 4096.0f / 3.3f);
+    // Reverse transform
+    float sine_val = (2.0f * (val - 200) / SCALE) - 1.0f;
+    // Clamp to valid range [-1, 1]
+    if (sine_val < -1.0f || sine_val > 1.0f) {
+        return NAN;
+    }
+    // Return phase angle in radians
+    return asinf(sine_val);
+}
+
+// hanning window array creation
+uint16_t hanning_array[FFT_BUFFER_SIZE];
 void calchanning(){
 	for (int i = 0; i < FFT_BUFFER_SIZE; i++) {
 	        hanning_array[i] = (int)(0.5 * (1 - cos(2 * M_PI * i / (FFT_BUFFER_SIZE - 1))) * 4096);
 	    }
 }
-//only j1 and j2
-float bessel_jn(uint8_t n, float x) {
-    float sum = 0.0;
-    float term;
-    uint16_t k = 0;
 
-    do {
-        term = pow(-1, k) * pow(x / 2.0, 2 * k + n) / (tgamma(k + 1) * tgamma(k + n + 1));
-        sum += term;
-        k++;
-    } while (fabs(term) > TOLERANCE);
-
-    return sum;
-}
-
+//function to get sign of a value
 int sgn(float x) {
     if(x>=0){
     	return 1;
@@ -125,25 +119,23 @@ float arccot(float x) {
     return (PI / 2.0) - atan(x);
 }
 
-
+//FFT buffers for the double half buffer structure
 arm_rfft_fast_instance_f32 fftHandler;
 uint16_t ADC_val[FFT_BUFFER_SIZE*2] = {0};
 float fftBufIn1[FFT_BUFFER_SIZE]= {0.0};
 float fftBufIn2[FFT_BUFFER_SIZE]= {0.0};
 float fftBufOut[FFT_BUFFER_SIZE];
-uint8_t fftflag = 0;
+//index of the current fft count
 static int16_t fftIndex = 0;
+//data buffer for serial debug
 uint8_t data[50] = {0};
 uint16_t fft_count = 0;
 //avg used for noise
 uint32_t avg =0;
-//calculate # sample is 1khz
-
+//calculate which sample is 1khz
 uint16_t sample_count_1khz = (1000*FFT_BUFFER_SIZE)/SAMPLE_FREQ;
 uint32_t freq_mag[3]={0};
 float avgPhaseShift = 0.0;
-
-
 
 /* USER CODE END PV */
 
@@ -159,53 +151,58 @@ static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
-void Reset_PWM(TIM_HandleTypeDef *htim, uint32_t channel);
+
 void Sweep_PWM(TIM_HandleTypeDef *htim, uint32_t channel);
 uint32_t Read_ADC(void);
+//define pointers of the 3 timers used for pwm
 TIM_HandleTypeDef *htim_array[3] = {&htim3, &htim2, &htim2};
+//define pointers of the 3 channels used for pwm
 uint32_t pwm_channels[3] = {TIM_CHANNEL_1, TIM_CHANNEL_2, TIM_CHANNEL_3};
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+//read 1 ADC value
 uint32_t Read_ADC(void) {
     HAL_ADC_Start(&hadc1);
     HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
     return HAL_ADC_GetValue(&hadc1);
 }
-void Reset_PWM(TIM_HandleTypeDef *htim, uint32_t channel) {
-}
 
-
+//sweep pwm values of the MPC
 void Sweep_PWM(TIM_HandleTypeDef *htim, uint32_t channel) {
+  //delay to wait for mpc to go to start
 	HAL_Delay(1000);
 	uint32_t best_pwm_value = 0;
 	uint32_t min_adc_value = 0xFFFFFFFF;
 	uint32_t adc_val = Read_ADC();
+    //loop over all posible duty cycles
     for (uint16_t duty = 900; duty <= 2100; duty += 10) {
     	__HAL_TIM_SET_COMPARE(htim, channel, duty);
-        HAL_Delay(5);
-
+      HAL_Delay(5);
+      //average 5 adc values
     	uint32_t adc_val = 0;
-        for(uint16_t i= 0; i<5;i++){
-        	adc_val += Read_ADC();
-        	HAL_Delay(2);
-        }
-        //sprintf(data, "adc:%d, pwm:%d \r\n",adc_val, duty);
-        //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
-        if (adc_val < min_adc_value) {
-        	  min_adc_value = adc_val;
-        	  best_pwm_value = duty;
-
-        }
+      for(uint16_t i= 0; i<5;i++){
+        adc_val += Read_ADC();
+        HAL_Delay(2);
+      }
+      //sprintf(data, "adc:%d, pwm:%d \r\n",adc_val, duty);
+      //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+      //save best value
+      if (adc_val < min_adc_value) {
+        	min_adc_value = adc_val;
+        	best_pwm_value = duty;
+      }
 
     }
     //sprintf(data, "best adc:%d, pwm:%d \r\n",min_adc_value, best_pwm_value );
     //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+    //set pwm of paddle to best
     __HAL_TIM_SET_COMPARE(htim, channel, best_pwm_value);
     HAL_Delay(1000);
 }
-
+//First half buffer interupt handler
 void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc) {
         for (int i = 0; i < FFT_BUFFER_SIZE ; i++) {
 	 	fftBufIn1[i] = (float)(ADC_val[i]*hanning_array[i]);
@@ -214,7 +211,7 @@ void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc) {
         //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
         Calc_FFT(fftBufIn1);
 }
-
+//Second half buffer interupt handler
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 	 for (int i = 0; i < FFT_BUFFER_SIZE; i++) {
 	  	fftBufIn2[i] = (float)(ADC_val[i]*hanning_array[i]);
@@ -224,14 +221,10 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
         Calc_FFT(fftBufIn2);
 }
 
-
-
-
-
+//function to calculate the fft of a buffer
 void Calc_FFT(float *fftBufIn ){
 
-	arm_rfft_fast_f32(&fftHandler, fftBufIn, &fftBufOut,0);
-
+	    arm_rfft_fast_f32(&fftHandler, fftBufIn, &fftBufOut,0);
 		  float phase_1khz = 0.0f, phase_2khz = 0.0f;
 		  //calc freqmagnitude for 1,2,3khz
 		  float phase_shift_diff = 0.0;
@@ -245,12 +238,10 @@ void Calc_FFT(float *fftBufIn ){
 		            phase_1khz = phase;
 		        } else if (i == sample_count_1khz * 2) {
 		            phase_2khz = phase;
+                //because the sinewave generation and the fft speed are synchronized instead of the phase diff between generated sinewave and 2nd harmonic the phase of only 2nd harmonic is used
 		            phase_shift_diff = phase_2khz;
 		            //dacval= getPhaseAngle(HAL_DAC_GetValue(&hdac1, DAC1_CHANNEL_2));
-
-
 		        }
-
 			  freq_mag[i/sample_count_1khz-1]+=((uint32_t)curVal)/1000;
 	  		  //sprintf(data, "%d \r\n", (uint16_t)(curVal));
 	  		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
@@ -262,20 +253,15 @@ void Calc_FFT(float *fftBufIn ){
 
 			  avgPhaseShift += phase_shift_diff;
 			  fft_count++;
-
-
+        //calculate average of the intire FFT
 			  uint32_t avgTemp = 0;
-
 			  for (int i = 4; i < FFT_BUFFER_SIZE; i +=2){
 			  	float curVal = sqrtf((fftBufOut[i]*fftBufOut[i])+ (fftBufOut[i+1]*fftBufOut[i+1]));
 			  	avgTemp += ((uint32_t)curVal)/1000;  // Convert float to
-
-
-
 			  }
 			  avg += ((uint32_t)avgTemp/((FFT_BUFFER_SIZE / 2)-2));
 
-		  //old code, peakHz detector
+		  //code usefull for debugging, peaHz detector
 /*
 		  uint16_t freqIndex = 0;
 		  float peakVal =0.0;
@@ -301,12 +287,6 @@ void Calc_FFT(float *fftBufIn ){
 
 	  		freqIndex = 0;
 */
-
-
-
-
-
-
 }
 /* USER CODE END 0 */
 
@@ -348,8 +328,6 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-//polarization control
-
 
   //polarization control
   if(EnablePolControl){
@@ -377,7 +355,6 @@ int main(void)
   }
 
   //start sweep for mzm bias and calculate bias on midpoint between min and max output current
-
   uint32_t adc_val[256]={0};
   uint16_t dac_val[256]={0};
   uint16_t index_adc_val_smallest=0;
@@ -385,7 +362,7 @@ int main(void)
   HAL_DAC_Start(&hdac1,DAC_CHANNEL_1);
   Read_ADC();
   for(int i = 0; i< 3000; i+=STEP_SIZE_BIAS_SWEEP){
-	  //take avrage of 10values
+	  //take avrage of 20 ADC values
 
 	  HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1,DAC_ALIGN_12B_R, i);
 	  for(int j = 0; j<20;j++){
@@ -403,28 +380,27 @@ int main(void)
 	  dac_val[i/STEP_SIZE_BIAS_SWEEP] = i;
 	  HAL_Delay(10);
   }
-  //set dac to midpoint
+  //set dac to quad bias point in middle of max/min
   uint16_t midpoint_dac_val = dac_val[(index_adc_val_highest + index_adc_val_smallest) / 2];
-  // set to 1500 to see convergence to center
+  //DC bias can be set to static value if sweep is unwanted
+  //midpoint_dac_val = 1870;
   HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, midpoint_dac_val  );
   sprintf(data, "bias set as:%d\r\n\n ",midpoint_dac_val);
   HAL_UART_Transmit(&huart2, data, strlen(data), 100);
-  midpoint_dac_val = 1870;
-
-
-
 
   //reset the adc
-  //HAL_ADC_Stop(&hadc1);
-  //ADC_Disable(&hadc1);
+  //initialize adc for running in continous mode, this is normaly auto generated but because 2 different modes are used extra adc_init is added
   MX_ADC1_Init2();
 
   HAL_TIM_Base_Start(&htim6);
   calcsin();
   calchanning();
   HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+  //start dither generation
   HAL_DAC_Start_DMA(&hdac1, DAC1_CHANNEL_2, sine_val, 100, DAC_ALIGN_12B_R);
+  //start double buffer 
   HAL_ADC_Start_DMA(&hadc1,(uint32_t *)ADC_val,FFT_BUFFER_SIZE*2);
+  //init fft
   arm_rfft_fast_init_f32(&fftHandler,FFT_BUFFER_SIZE);
   HAL_TIM_Base_Start(&htim1);
 
@@ -444,37 +420,23 @@ int main(void)
 
 	  if(fft_count>=FFT_AVRAGE_COUNT){
 		  float phaseShift = avgPhaseShift/ FFT_AVRAGE_COUNT;
-		  //sprintf(data, "phase shift: %d\r\n\n ",(int16_t)(phaseShift*1000));
-		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
-
 		  fft_count=0;
 		  //sprintf(data, "%dfor  %d 1khz:%d 2khz:%d 3khz:%d\r\n ",sweep_count,prev_bias,freq_mag[0], freq_mag[1] ,freq_mag[2]);
 		  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 
-
-			  //sprintf(data, "phase shift: %d\r\n\n ",(int16_t)(phaseShift*1000));
-			  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
-		  // divided by 4096# points dac multiplied by non inverting amp 14.124 = 3.3V*82k/25k+1
-			  //code from paper
-		  //float Vpi = ((midpoint_dac_val*13.724)/4096.0)*2;
-		  //float Vac = 0.66;
-		  //float correction =(Vpi/PI*arccot(((float)freq_mag[1]*bessel_jn(1,((Vac*PI)/Vpi)))/((float)freq_mag[0]*bessel_jn(2,((Vac*PI)/Vpi))))*sgn(phaseShift));//-(Vpi/2);
-		  //midpoint_dac_val = midpoint_dac_val - (int16_t)((correction/13.724)*4096);
-		  //fixed offset
-			  avg = avg/100;
-			  //sprintf(data, "avg: %d\r\n ",avg);
-			  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
-		  if(freq_mag[1]> 0){
-			  float correction2 =-2*sgn(phaseShift);
-			  midpoint_dac_val = midpoint_dac_val - (int16_t)(correction2);
-			  //sprintf(data, "correction: %d\r\n\n ",(int16_t)(correction2));
-			  //HAL_UART_Transmit(&huart2, data, strlen(data), 100);
-		  }
-		  avg = 0;
+      //avg can be used to look at the noise level of the TIA
+			avg = avg/100;
+			//sprintf(data, "avg: %d\r\n ",avg);
+			//HAL_UART_Transmit(&huart2, data, strlen(data), 100);
+      avg = 0;
+      //correct bias according to the phase shift
+			float correction2 =- BIAS_CORRECTION_FACTOR * sgn(phaseShift);
+			midpoint_dac_val = midpoint_dac_val - (int16_t)(correction2);
+      // print value of the phase shift and new DAC value 0 ~= 0V, 4096 ~12V
 		  sprintf(data, "phase: %d new dac val: %d\r\n ",(int16_t)(phaseShift*1000), midpoint_dac_val);
 		  HAL_UART_Transmit(&huart2, data, strlen(data), 100);
 		  HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, midpoint_dac_val);
-
+      //reset fft
 	  		fft_count=0;
 	  		avgPhaseShift = 0;
 			  for(int i =0;i<=2;i++){
@@ -483,7 +445,7 @@ int main(void)
 			  fft_count=0;
 	  }
 
-
+//preterb and observe algorithm, would not recomend above algorithm works better :)
 /*
 	  //for(int sweep = midpoint_dac_val-STEP_SIZE_BIAS_SWEEP; i<midpoint_dac_val+STEP_SIZE_BIAS_SWEEP; i+=STEP_SIZE_BIAS_SWEEP)
 	  //sweep through best known value of bias, one below and one above
